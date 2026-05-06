@@ -2,19 +2,42 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../models/db');
-const nodemailer = require('nodemailer');
 const multer = require('multer');
 const path = require('path');
+const axios = require('axios');
 const router = express.Router();
 
-// Configure multer for file uploads
+// Multer config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname))
 });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
-// Register (with driver document upload)
+// Brevo email sender
+async function sendEmailViaBrevo(toEmail, subject, textContent) {
+  try {
+    await axios.post('https://api.brevo.com/v3/smtp/email', {
+      sender: { email: process.env.BREVO_SENDER_EMAIL },
+      to: [{ email: toEmail }],
+      subject: subject,
+      textContent: textContent,
+    }, {
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json'
+      }
+    });
+    console.log(`Email sent to ${toEmail}: ${subject}`);
+    return true;
+  } catch (error) {
+    console.error(`Brevo error:`, error.response?.data || error.message);
+    return false;
+  }
+}
+
+// Register
 router.post('/register', upload.fields([{ name: 'idPhoto' }, { name: 'selfie' }]), async (req, res) => {
   const { fullname, email, password, role, phone, plate_number } = req.body;
   if (!['commuter','driver','admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
@@ -63,7 +86,7 @@ router.post('/login', async (req, res) => {
   res.json({ token, user: user.rows[0] });
 });
 
-// Forgot password – request OTP
+// Forgot password – OTP via Brevo
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ error: 'Email required' });
@@ -73,30 +96,9 @@ router.post('/forgot-password', async (req, res) => {
   const expiresAt = new Date(Date.now() + 10 * 60000);
   await pool.query(`UPDATE password_resets SET used = true WHERE email = $1 AND used = false`, [email]);
   await pool.query(`INSERT INTO password_resets (email, otp, expires_at) VALUES ($1,$2,$3)`, [email, otp, expiresAt]);
-
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT),
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    family: 4, // Force IPv4
-  });
-
-  try {
-    await transporter.sendMail({
-      from: `"EV-HAIL-LABS" <${process.env.SMTP_FROM}>`,
-      to: email,
-      subject: 'Password Reset OTP',
-      text: `Your OTP: ${otp} (valid 10 minutes)`,
-    });
-    res.json({ message: 'OTP sent' });
-  } catch (error) {
-    console.error('Email error:', error);
-    res.status(500).json({ error: 'Failed to send OTP' });
-  }
+  const sent = await sendEmailViaBrevo(email, 'Password Reset OTP', `Your OTP is: ${otp}\nExpires in 10 minutes.`);
+  if (sent) res.json({ message: 'OTP sent' });
+  else res.status(500).json({ error: 'Failed to send OTP' });
 });
 
 // Verify OTP

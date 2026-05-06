@@ -1,50 +1,43 @@
 const express = require('express');
 const pool = require('../models/db');
-const nodemailer = require('nodemailer');
+const axios = require('axios');
 const { verifyToken, isAdmin } = require('../middleware/auth');
 const router = express.Router();
 
-// Configure nodemailer transporter (force IPv4)
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: parseInt(process.env.SMTP_PORT),
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-  family: 4,
-});
-
-// Helper function to send email notification to driver
-async function sendDriverNotification(email, fullname, status, reason = '') {
-  const subject = status === 'approved' 
-    ? 'Your driver registration has been approved!' 
-    : 'Your driver registration has been rejected';
-  
-  const text = status === 'approved'
-    ? `Hello ${fullname},\n\nCongratulations! Your driver account has been approved. You can now log in to the EV Hailing app and start accepting ride requests.\n\nThank you for joining our electric fleet!`
-    : `Hello ${fullname},\n\nWe regret to inform you that your driver registration has been rejected.\n\nReason: ${reason || 'Your application did not meet our requirements.'}\n\nYou may contact support for more information.`;
-
-  const html = status === 'approved'
-    ? `<h3>Hello ${fullname},</h3><p>Congratulations! Your driver account has been <strong>approved</strong>. You can now log in to the EV Hailing app and start accepting ride requests.</p><p>Thank you for joining our electric fleet!</p>`
-    : `<h3>Hello ${fullname},</h3><p>We regret to inform you that your driver registration has been <strong>rejected</strong>.</p><p>Reason: ${reason || 'Your application did not meet our requirements.'}</p><p>You may contact support for more information.</p>`;
-
+// Brevo helper (same as auth)
+async function sendEmailViaBrevo(toEmail, subject, textContent) {
   try {
-    await transporter.sendMail({
-      from: `"EV-HAIL-LABS" <${process.env.SMTP_FROM}>`,
-      to: email,
+    await axios.post('https://api.brevo.com/v3/smtp/email', {
+      sender: { email: process.env.BREVO_SENDER_EMAIL },
+      to: [{ email: toEmail }],
       subject: subject,
-      text: text,
-      html: html,
+      textContent: textContent,
+    }, {
+      headers: {
+        'accept': 'application/json',
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json'
+      }
     });
-    console.log(`Email sent to ${email} for ${status}`);
-  } catch (err) {
-    console.error(`Failed to send email to ${email}:`, err);
+    console.log(`Email sent to ${toEmail}: ${subject}`);
+    return true;
+  } catch (error) {
+    console.error(`Brevo error:`, error.response?.data || error.message);
+    return false;
   }
 }
 
-// Get all users (exclude unapproved drivers)
+async function sendDriverNotification(email, fullname, status, reason = '') {
+  const subject = status === 'approved'
+    ? 'Your driver registration has been approved!'
+    : 'Your driver registration has been rejected';
+  const textContent = status === 'approved'
+    ? `Hello ${fullname},\n\nCongratulations! Your driver account has been approved. You can now log in to the EV Hailing app and start accepting ride requests.\n\nThank you for joining our electric fleet!`
+    : `Hello ${fullname},\n\nWe regret to inform you that your driver registration has been rejected.\n\nReason: ${reason || 'Your application did not meet our requirements.'}\n\nYou may contact support for more information.`;
+  await sendEmailViaBrevo(email, subject, textContent);
+}
+
+// GET all users (excludes unapproved drivers)
 router.get('/users', verifyToken, isAdmin, async (req, res) => {
   const users = await pool.query(`
     SELECT u.id, u.fullname, u.email, u.role, u.phone, u.created_at
@@ -55,22 +48,7 @@ router.get('/users', verifyToken, isAdmin, async (req, res) => {
   res.json(users.rows);
 });
 
-// Get all rides
-router.get('/rides', verifyToken, isAdmin, async (req, res) => {
-  const rides = await pool.query(`
-    SELECT r.*, 
-      c.fullname as commuter_name, 
-      d_user.fullname as driver_name
-    FROM ride_requests r
-    LEFT JOIN users c ON r.commuter_id = c.id
-    LEFT JOIN drivers d ON r.driver_id = d.user_id
-    LEFT JOIN users d_user ON d.user_id = d_user.id
-    ORDER BY r.created_at DESC
-  `);
-  res.json(rides.rows);
-});
-
-// Get pending drivers (unapproved)
+// GET pending drivers
 router.get('/pending-drivers', verifyToken, isAdmin, async (req, res) => {
   const result = await pool.query(`
     SELECT u.id, u.fullname, u.email, u.phone, d.plate_number, d.id_photo_path, d.selfie_path, d.submitted_at
@@ -82,47 +60,45 @@ router.get('/pending-drivers', verifyToken, isAdmin, async (req, res) => {
   res.json(result.rows);
 });
 
-// Approve a driver – sends email notification
+// GET rides
+router.get('/rides', verifyToken, isAdmin, async (req, res) => {
+  const rides = await pool.query(`
+    SELECT r.*, c.fullname as commuter_name, d_user.fullname as driver_name
+    FROM ride_requests r
+    LEFT JOIN users c ON r.commuter_id = c.id
+    LEFT JOIN drivers d ON r.driver_id = d.user_id
+    LEFT JOIN users d_user ON d.user_id = d_user.id
+    ORDER BY r.created_at DESC
+  `);
+  res.json(rides.rows);
+});
+
+// Approve driver (sends email)
 router.put('/approve-driver/:userId', verifyToken, isAdmin, async (req, res) => {
   const { userId } = req.params;
-  
   const driverInfo = await pool.query(
     `SELECT u.email, u.fullname FROM users u JOIN drivers d ON u.id = d.user_id WHERE u.id = $1`,
     [userId]
   );
-  if (driverInfo.rows.length === 0) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
-  
+  if (driverInfo.rows.length === 0) return res.status(404).json({ error: 'Driver not found' });
   await pool.query(`UPDATE drivers SET is_approved = true WHERE user_id = $1`, [userId]);
-  
-  // Send approval email (don't await to avoid blocking response)
   sendDriverNotification(driverInfo.rows[0].email, driverInfo.rows[0].fullname, 'approved');
-  
   res.json({ message: 'Driver approved successfully. Email notification sent.' });
 });
 
-// Reject a driver – sends email notification
+// Reject driver (sends email)
 router.delete('/reject-driver/:userId', verifyToken, isAdmin, async (req, res) => {
   const { userId } = req.params;
-  
   const driverInfo = await pool.query(
     `SELECT u.email, u.fullname FROM users u JOIN drivers d ON u.id = d.user_id WHERE u.id = $1`,
     [userId]
   );
-  if (driverInfo.rows.length === 0) {
-    return res.status(404).json({ error: 'Driver not found' });
-  }
-  
+  if (driverInfo.rows.length === 0) return res.status(404).json({ error: 'Driver not found' });
   const { email, fullname } = driverInfo.rows[0];
   const reason = req.body.reason || 'Your application did not meet our requirements.';
-  
   await pool.query(`DELETE FROM drivers WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
-  
-  // Send rejection email
   sendDriverNotification(email, fullname, 'rejected', reason);
-  
   res.json({ message: 'Driver rejected and removed. Email notification sent.' });
 });
 
