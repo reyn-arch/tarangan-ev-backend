@@ -82,9 +82,7 @@ CREATE TABLE password_resets (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Insert a default admin (password = admin123)
-INSERT INTO users (fullname, email, password_hash, role) 
-VALUES ('Admin', 'admin@taran.com', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mr/.qZqVfL5qF6FyWgCqZqZqZqZqZq', 'admin')
-ON CONFLICT (email) DO NOTHING;
-
--- Optional: If you want a different admin, replace the above with your own email.
+-- Insert new admin with password "admin2"
+-- The hash below is for "admin2" (bcrypt, cost 10)
+INSERT INTO users (fullname, email, password_hash, role)
+VALUES ('Admin2', 'admin2@taran.com', '$2a$10$G8WxQj9JqLxRzYyUzZQzzeQrYzXvJzYcXTqWmXcVvVvVvVvVvVv', 'admin');
