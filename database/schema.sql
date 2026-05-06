@@ -1,7 +1,9 @@
-CREATE DATABASE taran_gan_hailing;
+-- ✅ Fully corrected schema for Render cloud database
 
-\c taran_gan_hailing;
+-- Drop existing tables if you want a clean slate (optional – uncomment if needed)
+-- DROP TABLE IF EXISTS password_resets, ratings, ride_requests, notifications, drivers, users CASCADE;
 
+-- Users table
 CREATE TABLE users (
   id SERIAL PRIMARY KEY,
   fullname VARCHAR(100) NOT NULL,
@@ -13,6 +15,7 @@ CREATE TABLE users (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Drivers table (including approval and file upload columns)
 CREATE TABLE drivers (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   vehicle_type VARCHAR(50) DEFAULT 'Electric L2B',
@@ -22,9 +25,14 @@ CREATE TABLE drivers (
   current_lng DECIMAL(11,8),
   rating_avg DECIMAL(2,1) DEFAULT 0,
   total_trips INTEGER DEFAULT 0,
-  battery_level INTEGER DEFAULT 100
+  battery_level INTEGER DEFAULT 100,
+  id_photo_path TEXT,
+  selfie_path TEXT,
+  is_approved BOOLEAN DEFAULT false,
+  submitted_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Ride requests table
 CREATE TABLE ride_requests (
   id SERIAL PRIMARY KEY,
   commuter_id INTEGER REFERENCES users(id),
@@ -43,6 +51,7 @@ CREATE TABLE ride_requests (
   CONSTRAINT valid_status CHECK (status IN ('searching','accepted','arrived','started','completed','cancelled'))
 );
 
+-- Ratings table
 CREATE TABLE ratings (
   id SERIAL PRIMARY KEY,
   ride_id INTEGER REFERENCES ride_requests(id),
@@ -53,6 +62,7 @@ CREATE TABLE ratings (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Notifications table
 CREATE TABLE notifications (
   id SERIAL PRIMARY KEY,
   user_id INTEGER REFERENCES users(id),
@@ -62,7 +72,19 @@ CREATE TABLE notifications (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Password resets table (for forgot password OTP)
+CREATE TABLE password_resets (
+  id SERIAL PRIMARY KEY,
+  email VARCHAR(100) NOT NULL,
+  otp VARCHAR(6) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  used BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
 -- Insert a default admin (password = admin123)
 INSERT INTO users (fullname, email, password_hash, role) 
-VALUES ('Admin', 'admin@taran.com', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mr/.qZqVfL5qF6FyWgCqZqZqZqZqZq', 'admin');
--- (hash is for "admin123", you can change later)
+VALUES ('Admin', 'admin@taran.com', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mr/.qZqVfL5qF6FyWgCqZqZqZqZqZq', 'admin')
+ON CONFLICT (email) DO NOTHING;
+
+-- Optional: If you want a different admin, replace the above with your own email.
