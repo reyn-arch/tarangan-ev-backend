@@ -13,10 +13,10 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
-  family: 4, // Force IPv4
+  family: 4,
 });
 
-// Helper function to send email
+// Helper function to send email notification to driver
 async function sendDriverNotification(email, fullname, status, reason = '') {
   const subject = status === 'approved' 
     ? 'Your driver registration has been approved!' 
@@ -44,9 +44,14 @@ async function sendDriverNotification(email, fullname, status, reason = '') {
   }
 }
 
-// Get all users
+// Get all users (exclude unapproved drivers)
 router.get('/users', verifyToken, isAdmin, async (req, res) => {
-  const users = await pool.query(`SELECT id, fullname, email, role, phone, created_at FROM users`);
+  const users = await pool.query(`
+    SELECT u.id, u.fullname, u.email, u.role, u.phone, u.created_at
+    FROM users u
+    LEFT JOIN drivers d ON u.id = d.user_id
+    WHERE (u.role != 'driver') OR (u.role = 'driver' AND d.is_approved = true)
+  `);
   res.json(users.rows);
 });
 
@@ -65,7 +70,7 @@ router.get('/rides', verifyToken, isAdmin, async (req, res) => {
   res.json(rides.rows);
 });
 
-// Get pending drivers
+// Get pending drivers (unapproved)
 router.get('/pending-drivers', verifyToken, isAdmin, async (req, res) => {
   const result = await pool.query(`
     SELECT u.id, u.fullname, u.email, u.phone, d.plate_number, d.id_photo_path, d.selfie_path, d.submitted_at
@@ -77,31 +82,37 @@ router.get('/pending-drivers', verifyToken, isAdmin, async (req, res) => {
   res.json(result.rows);
 });
 
-// Approve driver (sends email)
+// Approve a driver – sends email notification
 router.put('/approve-driver/:userId', verifyToken, isAdmin, async (req, res) => {
   const { userId } = req.params;
+  
   const driverInfo = await pool.query(
     `SELECT u.email, u.fullname FROM users u JOIN drivers d ON u.id = d.user_id WHERE u.id = $1`,
     [userId]
   );
-  if (driverInfo.rows.length === 0) return res.status(404).json({ error: 'Driver not found' });
+  if (driverInfo.rows.length === 0) {
+    return res.status(404).json({ error: 'Driver not found' });
+  }
   
   await pool.query(`UPDATE drivers SET is_approved = true WHERE user_id = $1`, [userId]);
   
-  // Send email asynchronously (don't await to avoid delaying response)
+  // Send approval email (don't await to avoid blocking response)
   sendDriverNotification(driverInfo.rows[0].email, driverInfo.rows[0].fullname, 'approved');
   
   res.json({ message: 'Driver approved successfully. Email notification sent.' });
 });
 
-// Reject driver (sends email)
+// Reject a driver – sends email notification
 router.delete('/reject-driver/:userId', verifyToken, isAdmin, async (req, res) => {
   const { userId } = req.params;
+  
   const driverInfo = await pool.query(
     `SELECT u.email, u.fullname FROM users u JOIN drivers d ON u.id = d.user_id WHERE u.id = $1`,
     [userId]
   );
-  if (driverInfo.rows.length === 0) return res.status(404).json({ error: 'Driver not found' });
+  if (driverInfo.rows.length === 0) {
+    return res.status(404).json({ error: 'Driver not found' });
+  }
   
   const { email, fullname } = driverInfo.rows[0];
   const reason = req.body.reason || 'Your application did not meet our requirements.';
@@ -109,6 +120,7 @@ router.delete('/reject-driver/:userId', verifyToken, isAdmin, async (req, res) =
   await pool.query(`DELETE FROM drivers WHERE user_id = $1`, [userId]);
   await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
   
+  // Send rejection email
   sendDriverNotification(email, fullname, 'rejected', reason);
   
   res.json({ message: 'Driver rejected and removed. Email notification sent.' });
