@@ -85,4 +85,4 @@ CREATE TABLE password_resets (
 -- Insert new admin with password "admin2"
 -- The hash below is for "admin2" (bcrypt, cost 10)
 INSERT INTO users (fullname, email, password_hash, role)
-VALUES ('Admin2', 'admin2@taran.com', '$2a$10$G8WxQj9JqLxRzYyUzZQzzeQrYzXvJzYcXTqWmXcVvVvVvVvVvVv', 'admin');
+VALUES ('Admin2', 'admin2@taran.com', '$2b$10$gyFmF54NKLbYaiaDGuhtHu9g7RInqvu6rq.LyX/BFnRpD3uESc.lK', 'admin');
