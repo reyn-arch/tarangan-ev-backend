@@ -54,9 +54,9 @@ router.post('/register', upload.fields([{ name: 'idPhoto' }, { name: 'selfie' }]
       const idPhotoPath = req.files?.idPhoto ? req.files.idPhoto[0].path : null;
       const selfiePath = req.files?.selfie ? req.files.selfie[0].path : null;
       await client.query(
-        `INSERT INTO drivers (user_id, plate_number, id_photo_path, selfie_path, is_approved) VALUES ($1,$2,$3,$4,false)`,
-        [userId, plate_number, idPhotoPath, selfiePath]
-      );
+  `INSERT INTO drivers (user_id, id_photo_path, selfie_path, is_approved) VALUES ($1,$2,$3,false)`,
+  [userId, idPhotoPath, selfiePath]
+);
     }
     await client.query('COMMIT');
     const token = jwt.sign({ id: userId, role }, process.env.JWT_SECRET);
