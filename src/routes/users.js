@@ -4,11 +4,11 @@ const pool = require('../models/db');
 const { verifyToken } = require('../middleware/auth');
 const router = express.Router();
 
-// GET current user profile
+// GET current user profile (includes avatar_url)
 router.get('/profile', verifyToken, async (req, res) => {
   try {
     const user = await pool.query(
-      `SELECT id, fullname, email, phone, role, created_at FROM users WHERE id = $1`,
+      `SELECT id, fullname, email, phone, role, created_at, avatar_url FROM users WHERE id = $1`,
       [req.user.id]
     );
     if (user.rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -37,25 +37,14 @@ router.put('/profile', verifyToken, async (req, res) => {
 // CHANGE email (requires current password)
 router.post('/change-email', verifyToken, async (req, res) => {
   const { newEmail, currentPassword } = req.body;
-  if (!newEmail || !currentPassword) {
-    return res.status(400).json({ error: 'New email and current password required' });
-  }
+  if (!newEmail || !currentPassword) return res.status(400).json({ error: 'New email and current password required' });
   try {
-    // Get user's password hash
     const user = await pool.query(`SELECT password_hash FROM users WHERE id = $1`, [req.user.id]);
     if (user.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-
-    // Verify current password
     const valid = await bcrypt.compare(currentPassword, user.rows[0].password_hash);
     if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
-
-    // Check if email is already taken by another user
     const existing = await pool.query(`SELECT id FROM users WHERE email = $1 AND id != $2`, [newEmail, req.user.id]);
-    if (existing.rows.length > 0) {
-      return res.status(400).json({ error: 'Email already in use by another account' });
-    }
-
-    // Update email
+    if (existing.rows.length > 0) return res.status(400).json({ error: 'Email already in use' });
     await pool.query(`UPDATE users SET email = $1 WHERE id = $2`, [newEmail, req.user.id]);
     res.json({ message: 'Email updated successfully' });
   } catch (err) {
@@ -94,6 +83,19 @@ router.get('/driver-info', verifyToken, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// UPDATE avatar URL
+router.put('/avatar', verifyToken, async (req, res) => {
+  const { avatarUrl } = req.body;
+  if (!avatarUrl) return res.status(400).json({ error: 'Avatar URL required' });
+  try {
+    await pool.query(`UPDATE users SET avatar_url = $1 WHERE id = $2`, [avatarUrl, req.user.id]);
+    res.json({ message: 'Avatar updated', avatarUrl });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update avatar' });
   }
 });
 
