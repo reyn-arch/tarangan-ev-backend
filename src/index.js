@@ -10,6 +10,10 @@ const rideRoutes = require('./routes/rides');
 const adminRoutes = require('./routes/admin');
 const { setupSocketHandlers } = require('./sockets/rideSocket');
 
+const userRoutes = require('./routes/users');
+// ... then
+app.use('/api/users', userRoutes);
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, { cors: { origin: "*" } });
