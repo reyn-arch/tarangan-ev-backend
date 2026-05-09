@@ -34,6 +34,36 @@ router.put('/profile', verifyToken, async (req, res) => {
   }
 });
 
+// CHANGE email (requires current password)
+router.post('/change-email', verifyToken, async (req, res) => {
+  const { newEmail, currentPassword } = req.body;
+  if (!newEmail || !currentPassword) {
+    return res.status(400).json({ error: 'New email and current password required' });
+  }
+  try {
+    // Get user's password hash
+    const user = await pool.query(`SELECT password_hash FROM users WHERE id = $1`, [req.user.id]);
+    if (user.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    // Verify current password
+    const valid = await bcrypt.compare(currentPassword, user.rows[0].password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect' });
+
+    // Check if email is already taken by another user
+    const existing = await pool.query(`SELECT id FROM users WHERE email = $1 AND id != $2`, [newEmail, req.user.id]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'Email already in use by another account' });
+    }
+
+    // Update email
+    await pool.query(`UPDATE users SET email = $1 WHERE id = $2`, [newEmail, req.user.id]);
+    res.json({ message: 'Email updated successfully' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update email' });
+  }
+});
+
 // CHANGE password
 router.post('/change-password', verifyToken, async (req, res) => {
   const { oldPassword, newPassword } = req.body;
@@ -52,7 +82,7 @@ router.post('/change-password', verifyToken, async (req, res) => {
   }
 });
 
-// For drivers – get approval status and additional info
+// For drivers – get approval status and extra info
 router.get('/driver-info', verifyToken, async (req, res) => {
   if (req.user.role !== 'driver') return res.status(403).json({ error: 'Not a driver' });
   try {
