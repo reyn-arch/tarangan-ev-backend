@@ -39,7 +39,7 @@ async function sendEmailViaBrevo(toEmail, subject, textContent) {
 
 // Register
 router.post('/register', upload.fields([{ name: 'idPhoto' }, { name: 'selfie' }]), async (req, res) => {
-  const { fullname, email, password, role, phone, plate_number } = req.body;
+  const { fullname, email, password, role, phone, } = req.body;
   if (!['commuter','driver','admin'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
   const hashed = await bcrypt.hash(password, 10);
   const client = await pool.connect();
