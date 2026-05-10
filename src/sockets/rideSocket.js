@@ -27,10 +27,13 @@ async function getDriverDetails(driverId) {
 
 module.exports.setupSocketHandlers = (io) => {
   io.on('connection', (socket) => {
-    socket.on('registerUser', (userId) => socket.join(`user_${userId}`));
+    // Register user
+    socket.on('registerUser', (userId) => {
+      socket.join(`user_${userId}`);
+    });
 
     // Commuter subscribes to nearby drivers
-    socket.on('subscribeDrivers', async (commuterId, lat, lng, radius = 3) => {
+    socket.on('subscribeDrivers', (commuterId, lat, lng, radius = 3) => {
       socket.join(`commuter_${commuterId}`);
       const driversList = [];
       for (let [driverId, loc] of driverLocations.entries()) {
@@ -60,7 +63,7 @@ module.exports.setupSocketHandlers = (io) => {
         lat, lng,
         fullname: details?.fullname || 'Driver',
         plate: details?.plate_number || '',
-        rating: details?.rating_avg || 0,
+        rating: parseFloat(details?.rating_avg) || 0,
         avatarUrl: details?.avatar_url || null
       });
       await pool.query(
@@ -108,7 +111,11 @@ module.exports.setupSocketHandlers = (io) => {
       }
     });
 
-    // Ride request with sequential driver notification
+    // Global acceptRide handler (listens once per ride request via a unique event?)
+    // Instead, we'll use a one-time listener per ride request, but we need to store the handler.
+    // The proper way: inside requestRide, we'll set a one-time listener that will be removed after accept or timeout.
+    // We'll also handle disconnection.
+
     socket.on('requestRide', async (data, callback) => {
       const { commuterId, pickup, dropoff, pickupAddr, dropoffAddr, commuterName } = data;
       const result = await pool.query(
@@ -158,7 +165,8 @@ module.exports.setupSocketHandlers = (io) => {
         timeoutIds.push(tid);
       };
 
-      const acceptHandler = async ({ rideId: acceptedId, driverId }) => {
+      // One-time accept handler for this ride request
+      const acceptRideHandler = async ({ rideId: acceptedId, driverId }) => {
         if (acceptedId !== rideId || accepted) return;
         accepted = true;
         timeoutIds.forEach(id => clearTimeout(id));
@@ -175,18 +183,18 @@ module.exports.setupSocketHandlers = (io) => {
         if (driverSocket) io.to(driverSocket).emit('rideAcceptedConfirm', { rideId });
       };
 
-      socket.on('acceptRide', async ({ rideId, driverId }) => {
-  console.log(`🔵 Backend received acceptRide: rideId=${rideId}, driverId=${driverId}`);
-  // ... update database and emit confirm
-});
+      socket.once('acceptRide', acceptRideHandler);
+      tryNextDriver();
 
+      // Cleanup on disconnect
       socket.on('disconnect', () => {
         if (!accepted) {
           timeoutIds.forEach(id => clearTimeout(id));
           pool.query(`UPDATE ride_requests SET status = 'cancelled' WHERE id = $1`, [rideId]);
         }
-        socket.off('acceptRide', acceptHandler);
+        socket.off('acceptRide', acceptRideHandler);
       });
+
       callback({ rideId, status: 'searching' });
     });
 
