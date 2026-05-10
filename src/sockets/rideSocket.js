@@ -175,8 +175,10 @@ module.exports.setupSocketHandlers = (io) => {
         if (driverSocket) io.to(driverSocket).emit('rideAcceptedConfirm', { rideId });
       };
 
-      socket.once('acceptRide', acceptHandler);
-      tryNextDriver();
+      socket.on('acceptRide', async ({ rideId, driverId }) => {
+  console.log(`🔵 Backend received acceptRide: rideId=${rideId}, driverId=${driverId}`);
+  // ... update database and emit confirm
+});
 
       socket.on('disconnect', () => {
         if (!accepted) {
