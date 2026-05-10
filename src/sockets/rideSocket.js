@@ -2,7 +2,8 @@ const pool = require('../models/db');
 
 const activeDrivers = new Map();      // driverId -> socket.id
 const driverLocations = new Map();    // driverId -> location data
-const pendingRides = new Map();       // rideId -> { commuterId, timeouts, notifiedDrivers }
+const commuterSubscriptions = new Map(); // commuterId -> { lat, lng, radius }
+const pendingRides = new Map();       // rideId -> { commuterId, timeouts, accepted }
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
@@ -27,12 +28,13 @@ async function getDriverDetails(driverId) {
 
 module.exports.setupSocketHandlers = (io) => {
   io.on('connection', (socket) => {
-    // General: register a user to a room
+    // Register user to a room
     socket.on('registerUser', (userId) => socket.join(`user_${userId}`));
 
-    // Commuter: subscribe to drivers in radius
+    // Commuter subscribes to nearby drivers
     socket.on('subscribeDrivers', (commuterId, lat, lng, radius = 5) => {
       socket.join(`commuter_${commuterId}`);
+      commuterSubscriptions.set(commuterId, { lat, lng, radius });
       const driversList = [];
       for (let [driverId, loc] of driverLocations.entries()) {
         const dist = getDistance(lat, lng, loc.lat, loc.lng);
@@ -174,7 +176,7 @@ module.exports.setupSocketHandlers = (io) => {
       callback({ rideId, status: 'searching' });
     });
 
-    // Driver accepts a ride – GLOBAL handler (this is what was missing)
+    // Driver accepts a ride – GLOBAL handler
     socket.on('acceptRide', async ({ rideId, driverId }) => {
       console.log(`🔵 ACCEPT RIDE: rideId=${rideId}, driverId=${driverId}`);
       const ride = pendingRides.get(rideId);
@@ -204,8 +206,11 @@ module.exports.setupSocketHandlers = (io) => {
         driverPlate: driver.plate,
         driverRating: driver.rating
       });
-      // Confirm to driver
-      io.to(socket.id).emit('rideAcceptedConfirm', { rideId });
+      // Confirm to driver (use the driver's socket)
+      const driverSocketId = activeDrivers.get(driverId);
+      if (driverSocketId) {
+        io.to(driverSocketId).emit('rideAcceptedConfirm', { rideId });
+      }
       console.log(`✅ Ride ${rideId} accepted by driver ${driverId}`);
     });
 
@@ -220,7 +225,7 @@ module.exports.setupSocketHandlers = (io) => {
         driverLocations.delete(driverId);
         await pool.query(`UPDATE drivers SET is_online = false WHERE user_id = $1`, [driverId]);
         // Notify commuters
-        for (let [commuterId, sub] of commuterSubscriptions.entries()) {
+        for (const [commuterId, sub] of commuterSubscriptions.entries()) {
           io.to(`commuter_${commuterId}`).emit('driverOffline', { driverId });
         }
       }
